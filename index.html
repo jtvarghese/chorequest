@@ -1,0 +1,1623 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover"/>
+  <meta name="theme-color" content="#0c0c14"/>
+  <meta name="mobile-web-app-capable" content="yes"/>
+  <meta name="apple-mobile-web-app-capable" content="yes"/>
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent"/>
+  <meta name="apple-mobile-web-app-title" content="Chore Quest"/>
+  <title>Chore Quest</title>
+  <link rel="manifest" href="manifest.json"/>
+  <style>
+    *{box-sizing:border-box;margin:0;padding:0}
+    body{background:#0c0c14;font-family:Palatino,Georgia,serif;overscroll-behavior:none}
+    #root{min-height:100vh}
+    #loader{position:fixed;inset:0;background:#0c0c14;display:flex;flex-direction:column;align-items:center;justify-content:center;color:#d4af37;gap:16px;z-index:9999;transition:opacity 0.5s}
+    @keyframes spin{to{transform:rotate(360deg)}}
+    .ring{width:44px;height:44px;border:3px solid #1a1a2a;border-top-color:#d4af37;border-radius:50%;animation:spin 1s linear infinite}
+    .errmsg{display:none;flex-direction:column;align-items:center;gap:12px;padding:32px;text-align:center}
+    .errmsg h2{color:#e8734a;font-size:20px}
+    .errmsg p{color:#666;font-size:13px;line-height:1.6;max-width:280px}
+    .errmsg button{background:#d4af37;color:#0c0c14;border:none;padding:12px 28px;border-radius:8px;font-size:15px;cursor:pointer;font-family:inherit;font-weight:700}
+  </style>
+</head>
+<body>
+  <div id="loader">
+    <div class="ring" id="spinner"></div>
+    <div style="font-size:22px;letter-spacing:4px;font-weight:400">⚔ CHORE QUEST</div>
+    <div id="loadmsg" style="font-size:12px;color:#555;letter-spacing:1px">Loading your adventure...</div>
+    <div class="errmsg" id="errmsg">
+      <h2>⚠ Load Error</h2>
+      <p id="errdetail">Something went wrong loading the app.</p>
+      <button onclick="location.reload()">Retry</button>
+    </div>
+  </div>
+  <div id="root"></div>
+
+  <script>
+    function showError(msg) {
+      document.getElementById('spinner').style.display='none';
+      document.getElementById('loadmsg').style.display='none';
+      document.getElementById('errmsg').style.display='flex';
+      if(msg) document.getElementById('errdetail').textContent = msg;
+    }
+    var loadTimeout = setTimeout(function(){ showError('Timed out loading scripts. Check your connection.'); }, 30000);
+    window.onerror = function(msg,src,line,col,err){ clearTimeout(loadTimeout); showError('JS Error: '+msg); return true; };
+  </script>
+
+  <!-- React (no JSX needed here) -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
+  <script>document.getElementById('loadmsg').textContent='Compiling app (1/4)...';</script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.5/babel.min.js"></script>
+
+  <!-- Part 1: Pure JS — data, helpers, storage, AI calls. No JSX. Runs fast. -->
+  <script>
+    const { useState, useEffect, useRef } = React;
+    document.getElementById('loadmsg').textContent='Loading data (2/4)...';
+
+// ── Classes ───────────────────────────────────────────────────────────────────
+const CLASSES = [
+  { id:"sanctum",    name:"Sanctum Mage",       emoji:"🧹", theme:"Cleaning & Housekeeping",       color:"#7eb8c9" },
+  { id:"matrimony",  name:"Matrimony Warlock",   emoji:"💍", theme:"Acts of love & care for Emily", color:"#e87ea1" },
+  { id:"cruciform",  name:"Cruciform Cleric",    emoji:"✝️", theme:"Pastoral & vocational work",    color:"#d4af37" },
+  { id:"gardenpride",name:"Gardenpride Druid",   emoji:"🌿", theme:"Gardening & pet care",          color:"#6aaa64" },
+  { id:"bodysmith",  name:"Bodysmith Barbarian", emoji:"💪", theme:"Fitness & physical training",   color:"#e8734a" },
+  { id:"culinary",   name:"Culinary Alchemist",  emoji:"🍲", theme:"Cooking & meal preparation",    color:"#b07fd4" },
+];
+const LEVEL_TITLES = {
+  sanctum:     ["Apprentice","Sweeper","Tidewarden","Dustbane","Hallowed Keeper","Archmage of Order"],
+  matrimony:   ["Devoted","Attentive","Steadfast","Cherished Pact","Heartbound","Eternal Warlock"],
+  cruciform:   ["Acolyte","Curate","Minister","Shepherd","Elder","High Servant"],
+  gardenpride: ["Seedling","Tender","Grove-ward","Bloom-caller","Root-speaker","Ancient Druid"],
+  bodysmith:   ["Raw Iron","Hardened","Tempered","Forged","Battle-scarred","Ironclad"],
+  culinary:    ["Kitchen Hand","Sous Mage","Brew-keeper","Flavor Sage","Grand Alchemist","Legendary Chef"],
+};
+
+// ── Known skills & attributes (hidden until discovered) ───────────────────────
+const KNOWN_SKILLS = [
+  { id:"cleaning",        name:"Cleaning",        emoji:"🧽", color:"#7eb8c9" },
+  { id:"gardening",       name:"Gardening",        emoji:"🌱", color:"#6aaa64" },
+  { id:"animal_handling", name:"Animal Handling",  emoji:"🐾", color:"#a07850" },
+  { id:"communications",  name:"Communications",   emoji:"🗣️", color:"#e87ea1" },
+  { id:"strategy",        name:"Strategy",         emoji:"♟️", color:"#9b8ec4" },
+  { id:"cooking",         name:"Cooking",          emoji:"🍳", color:"#b07fd4" },
+];
+const KNOWN_ATTRIBUTES = [
+  { id:"strength",    name:"Strength",     emoji:"💪", color:"#e8734a" },
+  { id:"charisma",    name:"Charisma",     emoji:"✨", color:"#e87ea1" },
+  { id:"intelligence",name:"Intelligence", emoji:"🧠", color:"#7eb8c9" },
+];
+
+// Proficiency tiers by level
+const TIERS = [
+  { minLevel:0,  label:"Untrained",   color:"#444" },
+  { minLevel:1,  label:"Novice",      color:"#7a7a9a" },
+  { minLevel:3,  label:"Adept",       color:"#6aaa64" },
+  { minLevel:6,  label:"Expert",      color:"#d4af37" },
+  { minLevel:10, label:"Master",      color:"#e87ea1" },
+  { minLevel:15, label:"Legendary",   color:"#e8734a" },
+];
+function getTier(level) {
+  let t = TIERS[0];
+  for (const tier of TIERS) { if (level >= tier.minLevel) t = tier; }
+  return t;
+}
+
+// ── Presets ───────────────────────────────────────────────────────────────────
+const PRESETS = [
+  { label:"Vacuuming",             classes:["sanctum"] },
+  { label:"Mopping / Scrubbing",   classes:["sanctum"] },
+  { label:"Laundry",               classes:["sanctum"] },
+  { label:"Tidying rooms",         classes:["sanctum"] },
+  { label:"Cooking a meal",        classes:["culinary"] },
+  { label:"Meal prep / Baking",    classes:["culinary"] },
+  { label:"Gardening",             classes:["gardenpride"] },
+  { label:"Watering plants",       classes:["gardenpride"] },
+  { label:"Pet feeding / care",    classes:["gardenpride"] },
+  { label:"Dog walk",              classes:["gardenpride","bodysmith"] },
+  { label:"Gym / Workout",         classes:["bodysmith"] },
+  { label:"Run / Walk",            classes:["bodysmith"] },
+  { label:"Sermon prep",           classes:["cruciform"] },
+  { label:"Pastoral visit",        classes:["cruciform"] },
+  { label:"Church admin",          classes:["cruciform"] },
+  { label:"Date with Emily",       classes:["matrimony"] },
+  { label:"Act of care for Emily", classes:["matrimony"] },
+];
+const TIMER_PRESETS = [
+  { label:"Quick quest", mins:15 },
+  { label:"Standard",    mins:25 },
+  { label:"Deep work",   mins:45 },
+  { label:"Long haul",   mins:60 },
+];
+
+// ── XP / Level helpers ────────────────────────────────────────────────────────
+function xpNeeded(level) { return Math.floor(200 * Math.pow(1.6, Math.max(level, 0))); }
+function getLevel(totalXp) {
+  let level = 0, remaining = totalXp;
+  while (remaining >= xpNeeded(level)) { remaining -= xpNeeded(level); level++; }
+  return { level, remaining, needed: xpNeeded(level) };
+}
+// Skill/attribute XP scale — slower (thresholds are smaller but skills are harder to gain)
+function skillXpNeeded(level) { return Math.floor(100 * Math.pow(1.5, Math.max(level, 0))); }
+function getSkillLevel(totalXp) {
+  let level = 0, remaining = totalXp;
+  while (remaining >= skillXpNeeded(level)) { remaining -= skillXpNeeded(level); level++; }
+  return { level, remaining, needed: skillXpNeeded(level) };
+}
+function getTitle(classId, level) {
+  const t = LEVEL_TITLES[classId] || [];
+  return t[Math.min(level, t.length - 1)] || `Level ${level}`;
+}
+function fmt(secs) {
+  const s = Math.max(0, Math.floor(secs));
+  const h = Math.floor(s/3600), m = Math.floor((s%3600)/60), ss = s%60;
+  if (h>0) return `${h}:${String(m).padStart(2,"0")}:${String(ss).padStart(2,"0")}`;
+  return `${String(m).padStart(2,"0")}:${String(ss).padStart(2,"0")}`;
+}
+
+// ── Storage ───────────────────────────────────────────────────────────────────
+const STORAGE_KEY = "chorequest-v2";
+async function loadData() {
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY);
+    if (!raw) return null;
+    const saved = JSON.parse(raw);
+    // Forward-migrate: fill in any fields added in newer versions
+    const customSkills = saved.customSkills ?? [];
+    const customAttrs  = saved.customAttrs  ?? [];
+
+    // Orphan recovery: if skillXp/attrXp has keys not in any known list, recreate metadata
+    const allKnownSkillIds = [...KNOWN_SKILLS.map(s=>s.id), ...customSkills.map(s=>s.id)];
+    const allKnownAttrIds  = [...KNOWN_ATTRIBUTES.map(a=>a.id), ...customAttrs.map(a=>a.id)];
+    Object.keys(saved.skillXp ?? {}).forEach(id => {
+      if (!allKnownSkillIds.includes(id)) {
+        // Try to recover name/emoji from pending, otherwise make a best-guess
+        const fromPending = (saved.pending ?? []).find(p=>p.id===id);
+        customSkills.push({ id, name:fromPending?.name ?? id, emoji:fromPending?.emoji ?? "⭐", color:"#9b8ec4" });
+      }
+    });
+    Object.keys(saved.attrXp ?? {}).forEach(id => {
+      if (!allKnownAttrIds.includes(id)) {
+        const fromPending = (saved.pending ?? []).find(p=>p.id===id);
+        customAttrs.push({ id, name:fromPending?.name ?? id, emoji:fromPending?.emoji ?? "⭐", color:"#6aaa64" });
+      }
+    });
+
+    return {
+      xp:           Object.fromEntries(CLASSES.map(c=>[c.id, saved.xp?.[c.id] ?? 0])),
+      skillXp:      saved.skillXp      ?? {},
+      attrXp:       saved.attrXp       ?? {},
+      pending:      saved.pending      ?? [],
+      customSkills,
+      customAttrs,
+      log:          saved.log          ?? [],
+      started:      saved.started      ?? new Date().toISOString(),
+      combat:       saved.combat       ?? { active: null, queue: [], defeated: [] },
+    };
+  } catch { return null; }
+}
+function saveData(d) { try { localStorage.setItem(STORAGE_KEY, JSON.stringify(d)); } catch {} }
+
+// ── Export / Import ───────────────────────────────────────────────────────────
+function exportSave(data) {
+  // Unicode-safe encoding: encode to UTF-8 bytes first, then base64
+  const json = JSON.stringify(data);
+  const utf8 = encodeURIComponent(json).replace(/%([0-9A-F]{2})/g, (_, p1) => String.fromCharCode(parseInt(p1, 16)));
+  return "CHOREQUEST:" + btoa(utf8);
+}
+function importSave(str) {
+  try {
+    const trimmed = str.trim();
+    if (!trimmed.startsWith("CHOREQUEST:")) return null;
+    const utf8 = atob(trimmed.slice(11));
+    const json = decodeURIComponent(utf8.split("").map(c => "%" + c.charCodeAt(0).toString(16).padStart(2,"0")).join(""));
+    return JSON.parse(json);
+  } catch { return null; }
+}
+function freshData() {
+  return {
+    xp:           Object.fromEntries(CLASSES.map(c=>[c.id,0])),
+    skillXp:      {},
+    attrXp:       {},
+    pending:      [],
+    customSkills: [],
+    customAttrs:  [],
+    log:          [],
+    started:      new Date().toISOString(),
+    combat:       { active: null, queue: [], defeated: [] },
+  };
+}
+
+// ── AI DM ─────────────────────────────────────────────────────────────────────
+const ALL_SKILL_IDS   = KNOWN_SKILLS.map(s=>s.id);
+const ALL_ATTR_IDS    = KNOWN_ATTRIBUTES.map(a=>a.id);
+
+async function callDM(description, minutes, laps, isMatrimony, discoveredSkills, discoveredAttrs) {
+  const classBlock = CLASSES.map(c=>`- ${c.id}: ${c.name} (${c.theme})`).join("\n");
+  const skillBlock = KNOWN_SKILLS.map(s=>`- ${s.id}: ${s.name}`).join("\n");
+  const attrBlock  = KNOWN_ATTRIBUTES.map(a=>`- ${a.id}: ${a.name}`).join("\n");
+
+  const prompt = `You are the Dungeon Master of a real-life chore RPG. A player completed a task. Award XP and narrate.
+
+CLASSES:
+${classBlock}
+
+SKILLS (can be discovered and levelled separately):
+${skillBlock}
+
+ATTRIBUTES (can be discovered and levelled separately):
+${attrBlock}
+
+TASK: "${description}"
+Time: ${minutes} minutes
+Sub-tasks: ${laps.length>0 ? `${laps.length} tasks: ${laps.map((lap,i)=>{const d=i===0?lap.secs:lap.secs-laps[i-1].secs;return `Task ${lap.n}: ${Math.round(d)}s`;}).join(", ")}` : "not tracked"}
+${isMatrimony?"NOTE: Involves Emily. Tender acts earn XP even if brief.":""}
+
+ALREADY DISCOVERED skills: ${discoveredSkills.length>0?discoveredSkills.join(", "):"none"}
+ALREADY DISCOVERED attributes: ${discoveredAttrs.length>0?discoveredAttrs.join(", "):"none"}
+
+RULES — CLASS XP:
+- Formula: (minutes) + (tasks completed) = total XP pool for classes.
+- Split across 1-2 relevant classes only. No token XP to unrelated classes.
+- Matrimony Warlock exception: tender act counts as +1 task even if unticked.
+
+RULES — SKILL & ATTRIBUTE XP:
+- Award skill/attribute XP SEPARATELY from class XP (smaller amounts: 1-5 XP per session per skill/attribute).
+- Only award to skills/attributes genuinely exercised.
+- If a skill or attribute from the known list was clearly used but is NOT yet discovered, flag it for discovery.
+- You may also suggest a NEW skill or attribute not on the known lists if something genuinely novel was demonstrated. Give it a short id (snake_case), name, and emoji.
+
+Respond ONLY in this exact JSON (no markdown, no extra):
+{
+  "xp": {"sanctum":0,"matrimony":0,"cruciform":0,"gardenpride":0,"bodysmith":0,"culinary":0},
+  "skillXp": {},
+  "attrXp": {},
+  "discover": [],
+  "suggestNew": [],
+  "narration": "2-3 DM sentences in RPG style. Reference class/skill used. Hint at growth.",
+  "dmNote": "One quiet observation or foreshadowing. Empty string if nothing to say."
+}
+
+Where:
+- skillXp: object of skill_id -> XP gained (only for ALREADY DISCOVERED skills)
+- attrXp: object of attr_id -> XP gained (only for ALREADY DISCOVERED attributes)
+- discover: array of known skill/attribute ids to unlock (not yet discovered, used this session)
+- suggestNew: array of {id, name, emoji, type:"skill"|"attribute", reason} for brand new ones needing approval`;
+
+  const res = await fetch("https://api.anthropic.com/v1/messages", {
+    method:"POST", headers:{"Content-Type":"application/json"},
+    body:JSON.stringify({ model:"claude-sonnet-4-20250514", max_tokens:600, messages:[{role:"user",content:prompt}] }),
+  });
+  const data = await res.json();
+  const raw = data.content.map(b=>b.text||"").join("").replace(/```json|```/g,"").trim();
+  return JSON.parse(raw);
+}
+
+// ── Session persistence (survives rotation/app-switch, not full kill) ────────
+const SESSION_KEY = "cq_timer";
+function saveTimerSession(state) {
+  try { sessionStorage.setItem(SESSION_KEY, JSON.stringify(state)); } catch {}
+}
+function loadTimerSession() {
+  try { const r = sessionStorage.getItem(SESSION_KEY); return r ? JSON.parse(r) : null; } catch { return null; }
+}
+function clearTimerSession() {
+  try { sessionStorage.removeItem(SESSION_KEY); } catch {}
+}
+
+// ── Combat AI ─────────────────────────────────────────────────────────────────────────────
+async function callDMVictory(enemy, totalTasks, totalMinutes) {
+  const classBlock = CLASSES.map(c=>`- ${c.id}: ${c.name} (${c.theme})`).join("\n");
+  const prompt = `You are the Dungeon Master of a real-life chore RPG. The player just DEFEATED a combat encounter through real-life tasks.
+
+ENEMY DEFEATED: "${enemy.name}" ${enemy.emoji}
+Enemy HP (tasks to defeat): ${enemy.maxHp}
+Tasks completed: ${totalTasks}
+Time across the battle: ${totalMinutes} minutes
+
+CLASSES:
+${classBlock}
+
+Write a triumphant 2-3 sentence victory narration in RPG style. Be dramatic. Reference the enemy.
+
+Also award bonus XP scaled to difficulty (HP):
+- 1-3 HP: small reward (10-20 bonus XP, 1-2 classes)
+- 4-7 HP: medium reward (20-40 bonus XP)
+- 8+ HP: large reward (40-80 bonus XP)
+
+Respond ONLY in this exact JSON (no markdown, no extra text):
+{"xp":{"sanctum":0,"matrimony":0,"cruciform":0,"gardenpride":0,"bodysmith":0,"culinary":0},"narration":"Victory narration.","dmNote":"One line foreshadowing or reflection. Empty string if nothing."}`;
+
+  const res = await fetch("https://api.anthropic.com/v1/messages", {
+    method:"POST", headers:{"Content-Type":"application/json"},
+    body:JSON.stringify({ model:"claude-sonnet-4-20250514", max_tokens:400, messages:[{role:"user",content:prompt}] }),
+  });
+  const d = await res.json();
+  const raw = d.content.map(b=>b.text||"").join("").replace(/```json|```/g,"").trim();
+  return JSON.parse(raw);
+}
+
+// ── Encounter Generator ───────────────────────────────────────────────────────
+async function callDMEncounter(recentLog, totalClassLevel, defeatedCount) {
+  const recentDesc = recentLog.slice(0,5).map(e=>e.description).join(", ") || "no recent tasks";
+  const prompt = `You are the Dungeon Master of a real-life chore RPG. You are sending a combat encounter to challenge the player.
+
+PLAYER CONTEXT:
+- Total class level: ${totalClassLevel}
+- Recent tasks completed: ${recentDesc}
+- Enemies defeated so far: ${defeatedCount}
+
+YOUR JOB:
+Invent a creative, flavourful enemy for the player to face. You have FULL creative discretion — it can be themed to their recent chores, completely fantastical, humorous, dramatic, or anything you like. Surprise them.
+
+HP should scale loosely with difficulty and player level:
+- Early game (total level 0-10): 2-5 HP
+- Mid game (total level 11-30): 4-8 HP  
+- Late game (total level 31+): 6-15 HP
+Also factor in how many enemies they've already defeated.
+
+Write a dramatic 1-2 sentence encounter introduction — as if narrating the enemy appearing before the player.
+
+Respond ONLY in this exact JSON (no markdown, no extra text):
+{"name":"Enemy Name","emoji":"👹","maxHp":3,"intro":"Dramatic 1-2 sentence encounter narration. Set the scene. Make it feel real."}`;
+
+  const res = await fetch("https://api.anthropic.com/v1/messages", {
+    method:"POST", headers:{"Content-Type":"application/json"},
+    body:JSON.stringify({ model:"claude-sonnet-4-20250514", max_tokens:200, messages:[{role:"user",content:prompt}] }),
+  });
+  const d = await res.json();
+  const raw = d.content.map(b=>b.text||"").join("").replace(/```json|```/g,"").trim();
+  return JSON.parse(raw);
+}
+
+  </script>
+
+  <!-- Part 2: JSX Components (smaller chunk) -->
+  <script type="text/babel" data-presets="react">
+    document.getElementById('loadmsg').textContent='Building UI (3/4)...';
+// ── UI Components ─────────────────────────────────────────────────────────────
+function ClassCard({ cls, xp }) {
+  const { level, remaining, needed } = getLevel(xp);
+  const pct = Math.round((remaining/needed)*100);
+  return (
+    <div style={{background:"rgba(255,255,255,0.03)",border:`1px solid ${cls.color}33`,borderRadius:14,padding:"14px 16px",display:"flex",flexDirection:"column",gap:8}}>
+      <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start"}}>
+        <div>
+          <div style={{fontSize:15,fontWeight:700,color:cls.color,fontFamily:"Palatino,Georgia,serif"}}>{cls.emoji} {cls.name}</div>
+          <div style={{fontSize:11,color:"#555",fontStyle:"italic",marginTop:1}}>{getTitle(cls.id,level)}</div>
+        </div>
+        <div style={{background:`${cls.color}22`,color:cls.color,borderRadius:20,padding:"3px 10px",fontSize:13,fontWeight:800}}>Lvl {level}</div>
+      </div>
+      <div style={{fontSize:11,color:"#444"}}>{cls.theme}</div>
+      <div style={{background:"#ffffff0e",borderRadius:99,height:6,overflow:"hidden"}}>
+        <div style={{width:`${pct}%`,height:"100%",background:`linear-gradient(90deg,${cls.color}55,${cls.color})`,borderRadius:99,transition:"width 0.7s ease"}}/>
+      </div>
+      <div style={{fontSize:10,color:"#444",textAlign:"right"}}>{remaining}/{needed} XP → Lvl {level+1}</div>
+    </div>
+  );
+}
+
+function SkillCard({ item, xp, type }) {
+  const { level, remaining, needed } = getSkillLevel(xp);
+  const tier = getTier(level);
+  const pct  = Math.round((remaining/needed)*100);
+  return (
+    <div style={{background:"rgba(255,255,255,0.03)",border:`1px solid ${item.color}33`,borderRadius:14,padding:"12px 14px",display:"flex",flexDirection:"column",gap:7}}>
+      <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+        <div style={{fontSize:14,fontWeight:700,color:item.color}}>{item.emoji} {item.name}</div>
+        <div style={{display:"flex",gap:5,alignItems:"center"}}>
+          <span style={{fontSize:10,color:tier.color,fontWeight:700,letterSpacing:1}}>{tier.label.toUpperCase()}</span>
+          <span style={{background:`${item.color}22`,color:item.color,borderRadius:20,padding:"2px 8px",fontSize:12,fontWeight:800}}>Lvl {level}</span>
+        </div>
+      </div>
+      <div style={{fontSize:10,color:"#444",letterSpacing:1}}>{type==="skill"?"SKILL":"ATTRIBUTE"}</div>
+      <div style={{background:"#ffffff0e",borderRadius:99,height:5,overflow:"hidden"}}>
+        <div style={{width:`${pct}%`,height:"100%",background:`linear-gradient(90deg,${item.color}55,${item.color})`,borderRadius:99,transition:"width 0.7s ease"}}/>
+      </div>
+      <div style={{fontSize:10,color:"#444",textAlign:"right"}}>{remaining}/{needed} XP → Lvl {level+1}</div>
+    </div>
+  );
+}
+
+function PendingCard({ item, onApprove, onReject }) {
+  return (
+    <div style={{background:"rgba(212,175,55,0.06)",border:"1px solid #d4af3733",borderRadius:12,padding:"14px 16px",display:"flex",flexDirection:"column",gap:10}}>
+      <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+        <div>
+          <div style={{fontSize:14,fontWeight:700,color:"#d4af37"}}>{item.emoji} {item.name}</div>
+          <div style={{fontSize:11,color:"#555",marginTop:2,letterSpacing:1}}>{item.type.toUpperCase()} — AWAITING APPROVAL</div>
+        </div>
+        <div style={{fontSize:22}}>{item.emoji}</div>
+      </div>
+      {item.reason && <div style={{fontSize:12,color:"#777",fontStyle:"italic"}}>"{item.reason}"</div>}
+      <div style={{display:"flex",gap:8}}>
+        <button onClick={onApprove} style={{
+          flex:1,padding:"9px 0",border:"none",borderRadius:8,
+          background:"linear-gradient(135deg,#2a4e2a,#142814)",color:"#6aaa64",
+          fontFamily:"inherit",fontSize:13,fontWeight:700,cursor:"pointer",letterSpacing:1,
+        }}>✓ ACCEPT</button>
+        <button onClick={onReject} style={{
+          flex:1,padding:"9px 0",border:"1px solid #e8734a33",borderRadius:8,
+          background:"rgba(232,115,74,0.06)",color:"#e8734a",
+          fontFamily:"inherit",fontSize:13,fontWeight:700,cursor:"pointer",letterSpacing:1,
+        }}>✗ REJECT</button>
+      </div>
+    </div>
+  );
+}
+
+// ── LogForm ───────────────────────────────────────────────────────────────────
+function LogForm({ defaultMinutes, laps=[], onSubmit, onCancel, submitting }) {
+  const [mode, setMode]   = useState("ai");
+  const [aiText, setAiText] = useState("");
+  const [preset, setPreset] = useState(null);
+  return (
+    <div>
+      <div style={{display:"flex",gap:4,marginBottom:16}}>
+        {[["ai","🤖 Describe freely"],["preset","📋 Pick a preset"]].map(([m,l])=>(
+          <button key={m} onClick={()=>setMode(m)} style={{
+            flex:1,padding:"10px 0",border:"none",borderRadius:8,cursor:"pointer",
+            fontFamily:"inherit",fontSize:12,fontWeight:700,letterSpacing:1,
+            background:mode===m?"#3a2a6e":"rgba(255,255,255,0.04)",
+            color:mode===m?"#e4ddd0":"#555",transition:"all 0.2s",
+          }}>{l}</button>
+        ))}
+      </div>
+      {mode==="ai"&&<>
+        <label style={{fontSize:11,color:"#555",letterSpacing:2,display:"block",marginBottom:7}}>📝 WHAT DID YOU DO?</label>
+        <textarea value={aiText} onChange={e=>setAiText(e.target.value)} rows={5}
+          placeholder={"Describe freely — the DM will judge it.\n\ne.g. Deep-cleaned the bathroom and walked the dog for 20 mins."}
+          style={{width:"100%",padding:"12px 14px",background:"rgba(255,255,255,0.04)",border:"1px solid #ffffff11",borderRadius:10,color:"#e4ddd0",fontFamily:"inherit",fontSize:14,resize:"vertical",boxSizing:"border-box",lineHeight:1.6,marginBottom:14}}
+        />
+        <button onClick={()=>aiText.trim()&&onSubmit({mode:"ai",text:aiText.trim(),minutes:defaultMinutes,laps})}
+          disabled={submitting||!aiText.trim()} style={{
+          width:"100%",padding:"14px 0",
+          background:submitting||!aiText.trim()?"#111118":"linear-gradient(135deg,#3a2a6e,#1e1040)",
+          border:"1px solid #5a4a9e44",borderRadius:10,
+          color:submitting||!aiText.trim()?"#333":"#e4ddd0",
+          fontFamily:"inherit",fontSize:15,fontWeight:700,letterSpacing:2,
+          cursor:submitting?"wait":!aiText.trim()?"not-allowed":"pointer",transition:"all 0.2s",marginBottom:onCancel?10:0,
+        }}>{submitting?"🎲 The DM deliberates...":"🎲 SUBMIT TO THE DM"}</button>
+      </>}
+      {mode==="preset"&&<>
+        <label style={{fontSize:11,color:"#555",letterSpacing:2,display:"block",marginBottom:7}}>🗂 SELECT CHORE</label>
+        <div style={{display:"flex",flexDirection:"column",gap:5,maxHeight:280,overflowY:"auto",paddingRight:4,marginBottom:14}}>
+          {PRESETS.map((chore,i)=>{
+            const cls=chore.classes.map(id=>CLASSES.find(c=>c.id===id));
+            return (
+              <button key={i} onClick={()=>setPreset(i)} style={{
+                textAlign:"left",padding:"11px 14px",
+                background:preset===i?"rgba(212,175,55,0.1)":"rgba(255,255,255,0.03)",
+                border:preset===i?"1px solid #d4af3744":"1px solid #ffffff08",
+                borderRadius:10,cursor:"pointer",color:"#e4ddd0",fontFamily:"inherit",fontSize:14,
+                display:"flex",justifyContent:"space-between",alignItems:"center",transition:"all 0.15s",
+              }}>
+                <span>{chore.label}</span>
+                <span style={{fontSize:17,marginLeft:10}}>{cls.map(c=>c.emoji).join("")}</span>
+              </button>
+            );
+          })}
+        </div>
+        <button onClick={()=>preset!==null&&onSubmit({mode:"preset",presetIdx:preset,minutes:defaultMinutes,laps})}
+          disabled={submitting||preset===null} style={{
+          width:"100%",padding:"14px 0",
+          background:submitting||preset===null?"#111118":"linear-gradient(135deg,#2a4e2a,#142814)",
+          border:"1px solid #4a7c4422",borderRadius:10,
+          color:submitting||preset===null?"#333":"#e4ddd0",
+          fontFamily:"inherit",fontSize:15,fontWeight:700,letterSpacing:2,
+          cursor:submitting?"wait":preset===null?"not-allowed":"pointer",transition:"all 0.2s",marginBottom:onCancel?10:0,
+        }}>{submitting?"🎲 The DM deliberates...":"✅ CLAIM XP"}</button>
+      </>}
+      {onCancel&&<button onClick={onCancel} style={{width:"100%",padding:"11px 0",border:"1px solid #ffffff0a",borderRadius:10,background:"transparent",color:"#444",fontFamily:"inherit",fontSize:13,cursor:"pointer"}}>↩ Discard & reset timer</button>}
+    </div>
+  );
+}
+
+// ── Save Modal ────────────────────────────────────────────────────────────────
+function SaveModal({ data, onImport, onClose, inline=false }) {
+  const [mode, setMode]         = useState("export"); // export | import
+  const [importText, setImportText] = useState("");
+  const [copied, setCopied]     = useState(false);
+  const [importError, setImportError] = useState("");
+  const exportStr = exportSave(data);
+
+  function handleCopy() {
+    navigator.clipboard.writeText(exportStr).then(()=>{
+      setCopied(true);
+      setTimeout(()=>setCopied(false), 2500);
+    }).catch(()=>{
+      // Fallback: select the textarea
+      const el = document.getElementById("export-textarea");
+      if (el) { el.select(); document.execCommand("copy"); setCopied(true); setTimeout(()=>setCopied(false),2500); }
+    });
+  }
+
+  function handleImport() {
+    setImportError("");
+    const parsed = importSave(importText);
+    if (!parsed) { setImportError("Invalid save code. Make sure you copied the full text."); return; }
+    onImport(parsed);
+    onClose();
+  }
+
+  return (
+    <div style={inline ? {} : {
+      position:"fixed",inset:0,zIndex:200,
+      background:"rgba(0,0,0,0.85)",backdropFilter:"blur(6px)",
+      display:"flex",alignItems:"flex-end",justifyContent:"center",
+    }} onClick={inline ? undefined : e=>{if(e.target===e.currentTarget)onClose();}}>
+      <div style={inline ? {paddingBottom:40} : {
+        width:"100%",maxWidth:640,
+        background:"#131320",border:"1px solid #ffffff15",
+        borderRadius:"20px 20px 0 0",padding:"24px 20px 40px",
+      }}>
+        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:20}}>
+          <div style={{fontSize:16,fontWeight:700,color:"#d4af37",letterSpacing:2}}>💾 SAVE DATA</div>
+          <button onClick={onClose} style={{background:"transparent",border:"none",color:"#555",fontSize:22,cursor:"pointer",padding:"0 4px"}}>✕</button>
+        </div>
+
+        {/* Mode toggle */}
+        <div style={{display:"flex",gap:4,marginBottom:20}}>
+          {[["export","📤 Export"],["import","📥 Import"]].map(([m,l])=>(
+            <button key={m} onClick={()=>{setMode(m);setImportError("");}} style={{
+              flex:1,padding:"10px 0",border:"none",borderRadius:8,cursor:"pointer",
+              fontFamily:"inherit",fontSize:13,fontWeight:700,letterSpacing:1,
+              background:mode===m?"#d4af37":"rgba(255,255,255,0.05)",
+              color:mode===m?"#0c0c14":"#555",transition:"all 0.2s",
+            }}>{l}</button>
+          ))}
+        </div>
+
+        {mode==="export"&&<>
+          <div style={{fontSize:12,color:"#555",marginBottom:10,lineHeight:1.6}}>
+            Copy this text and save it somewhere safe — Notes, iMessage to yourself, anywhere. Paste it back using Import to restore your progress on any device.
+          </div>
+          <textarea id="export-textarea" readOnly value={exportStr} rows={4}
+            style={{width:"100%",padding:"12px",background:"rgba(255,255,255,0.04)",border:"1px solid #ffffff11",borderRadius:10,color:"#6a6a8a",fontFamily:"monospace",fontSize:11,resize:"none",boxSizing:"border-box",lineHeight:1.5,marginBottom:12}}
+          />
+          <button onClick={handleCopy} style={{
+            width:"100%",padding:"14px 0",border:"none",borderRadius:10,
+            background:copied?"linear-gradient(135deg,#2a4e2a,#142814)":"linear-gradient(135deg,#3a2a6e,#1e1040)",
+            color:copied?"#6aaa64":"#e4ddd0",fontFamily:"inherit",fontSize:15,fontWeight:700,letterSpacing:2,cursor:"pointer",transition:"all 0.3s",
+          }}>{copied?"✓ COPIED!":"📋 COPY TO CLIPBOARD"}</button>
+        </>}
+
+        {mode==="import"&&<>
+          <div style={{fontSize:12,color:"#555",marginBottom:10,lineHeight:1.6}}>
+            Paste your save code below. This will replace your current character — make sure you export first if needed!
+          </div>
+          <textarea value={importText} onChange={e=>{setImportText(e.target.value);setImportError("");}}
+            placeholder="Paste your CHOREQUEST:... save code here"
+            rows={5}
+            style={{width:"100%",padding:"12px",background:"rgba(255,255,255,0.04)",border:`1px solid ${importError?"#e8734a66":"#ffffff11"}`,borderRadius:10,color:"#e4ddd0",fontFamily:"monospace",fontSize:11,resize:"none",boxSizing:"border-box",lineHeight:1.5,marginBottom:importError?6:12}}
+          />
+          {importError&&<div style={{fontSize:12,color:"#e8734a",marginBottom:10}}>{importError}</div>}
+          <button onClick={handleImport} disabled={!importText.trim()} style={{
+            width:"100%",padding:"14px 0",border:"none",borderRadius:10,
+            background:!importText.trim()?"#111118":"linear-gradient(135deg,#8b2e2e,#5a1a1a)",
+            color:!importText.trim()?"#333":"#e4ddd0",fontFamily:"inherit",fontSize:15,fontWeight:700,letterSpacing:2,
+            cursor:!importText.trim()?"not-allowed":"pointer",transition:"all 0.2s",
+          }}>📥 RESTORE SAVE</button>
+        </>}
+      </div>
+    </div>
+  );
+}
+
+function ManualLogForm({ submitting, onSubmit }) {
+  const [minutes, setMinutes] = useState(30);
+  return (
+    <div>
+      <div style={{marginBottom:14}}>
+        <label style={{fontSize:11,color:"#555",letterSpacing:2,display:"block",marginBottom:7}}>⏱ TIME SPENT (MINUTES)</label>
+        <input type="number" min={1} max={600} value={minutes}
+          onChange={e=>setMinutes(Math.max(1,parseInt(e.target.value)||1))}
+          style={{width:"100%",padding:"12px 14px",background:"rgba(255,255,255,0.04)",border:"1px solid #ffffff11",borderRadius:10,color:"#e4ddd0",fontFamily:"inherit",fontSize:18,boxSizing:"border-box"}}
+        />
+      </div>
+      <LogForm defaultMinutes={minutes} laps={[]} submitting={submitting} onSubmit={onSubmit} onCancel={null}/>
+    </div>
+  );
+}
+
+// ── Combat Components ─────────────────────────────────────────────────────────────────
+// Active enemy banner shown on character tab
+function CombatBanner({ enemy }) {
+  if (!enemy) return null;
+  const hpPct = Math.round(((enemy.maxHp - enemy.hpDealt) / enemy.maxHp) * 100);
+  const remaining = enemy.maxHp - enemy.hpDealt;
+  return (
+    <div style={{background:"rgba(232,115,74,0.08)",border:"1px solid #e8734a44",borderRadius:14,padding:"14px 16px",marginBottom:14}}>
+      <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:8}}>
+        <div style={{fontSize:15,fontWeight:700,color:"#e8734a"}}>{enemy.emoji} {enemy.name}</div>
+        <div style={{fontSize:11,color:"#e8734a",letterSpacing:1,fontWeight:700}}>IN COMBAT</div>
+      </div>
+      <div style={{display:"flex",justifyContent:"space-between",fontSize:12,color:"#666",marginBottom:8}}>
+        <span>HP: <span style={{color:"#e8734a",fontWeight:700}}>{remaining}</span> / {enemy.maxHp}</span>
+        <span style={{color:"#555"}}>{enemy.hpDealt} tasks dealt</span>
+      </div>
+      {/* HP bar — red drains left to right */}
+      <div style={{background:"#ffffff0e",borderRadius:99,height:8,overflow:"hidden"}}>
+        <div style={{width:`${hpPct}%`,height:"100%",background:"linear-gradient(90deg,#e8734a99,#e8734a)",borderRadius:99,transition:"width 0.7s ease"}}/>
+      </div>
+      <div style={{fontSize:11,color:"#555",marginTop:6,fontStyle:"italic"}}>
+        {remaining === 1 ? "One final task will defeat it!" : `${remaining} more tasks to defeat`}
+      </div>
+    </div>
+  );
+}
+
+// Combat management tab — DM generates all enemies
+function CombatTab({ combat, onSummonEnemy, onAbandon, totalClassLevel, recentLog }) {
+  const [summoning, setSummoning] = useState(false);
+  const [summonedIntro, setSummonedIntro] = useState(null);
+
+  const active   = combat?.active;
+  const queue    = combat?.queue    || [];
+  const defeated = combat?.defeated || [];
+
+  async function summonEnemy() {
+    setSummoning(true);
+    setSummonedIntro(null);
+    try {
+      const enemy = await callDMEncounter(recentLog, totalClassLevel, defeated.length);
+      const full  = { ...enemy, hpDealt:0, startedAt:new Date().toISOString() };
+      setSummonedIntro(enemy.intro);
+      onSummonEnemy(full);
+    } catch {
+      setSummonedIntro("The DM is momentarily indisposed. Try again.");
+    }
+    setSummoning(false);
+  }
+
+  return (
+    <div style={{paddingTop:8}}>
+
+      {/* Summoned intro flash */}
+      {summonedIntro && (
+        <div style={{background:"rgba(232,115,74,0.1)",border:"1px solid #e8734a55",borderRadius:14,padding:"14px 16px",marginBottom:16,fontStyle:"italic",color:"#c87050",fontSize:14,lineHeight:1.7}}>
+          🎲 {summonedIntro}
+          <button onClick={()=>setSummonedIntro(null)} style={{display:"block",marginTop:8,padding:"4px 12px",border:"1px solid #ffffff0a",borderRadius:6,background:"transparent",color:"#444",fontFamily:"inherit",fontSize:11,cursor:"pointer"}}>Dismiss</button>
+        </div>
+      )}
+
+      {/* Active encounter */}
+      {active ? (
+        <div style={{marginBottom:20}}>
+          <div style={{fontSize:11,color:"#e8734a",letterSpacing:2,marginBottom:10}}>⚔ ACTIVE ENCOUNTER</div>
+          <div style={{background:"rgba(232,115,74,0.08)",border:"1px solid #e8734a44",borderRadius:14,padding:"16px"}}>
+            <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:6}}>
+              <div style={{fontSize:22,fontWeight:800,color:"#e8734a"}}>{active.emoji} {active.name}</div>
+              <div style={{fontSize:12,color:"#e8734a",letterSpacing:1,fontWeight:700}}>
+                ❤️ {Math.max(0,active.maxHp - active.hpDealt)} / {active.maxHp}
+              </div>
+            </div>
+            {/* HP pips */}
+            <div style={{display:"flex",gap:5,flexWrap:"wrap",marginBottom:14,marginTop:10}}>
+              {Array.from({length:active.maxHp}).map((_,i)=>(
+                <div key={i} style={{
+                  width:30,height:30,borderRadius:7,fontSize:15,
+                  background: i < active.hpDealt ? "#1a1a1a" : "rgba(232,115,74,0.2)",
+                  border: i < active.hpDealt ? "1px solid #2a2a2a" : "1px solid #e8734a66",
+                  display:"flex",alignItems:"center",justifyContent:"center",
+                  opacity: i < active.hpDealt ? 0.25 : 1,
+                  transition:"all 0.4s",
+                }}>
+                  {i < active.hpDealt ? "✓" : "💀"}
+                </div>
+              ))}
+            </div>
+            <div style={{fontSize:12,color:"#555",fontStyle:"italic",marginBottom:14}}>
+              {active.hpDealt === 0
+                ? "The battle begins. Each task you complete deals 1 damage."
+                : active.maxHp - active.hpDealt === 1
+                ? "⚡ One final task will slay it!"
+                : `${active.maxHp - active.hpDealt} more tasks to defeat it.`}
+            </div>
+            <button onClick={onAbandon} style={{width:"100%",padding:"9px 0",border:"1px solid #ffffff0a",borderRadius:8,background:"transparent",color:"#3a3a3a",fontFamily:"inherit",fontSize:11,cursor:"pointer",letterSpacing:1}}>↩ Abandon encounter</button>
+          </div>
+        </div>
+      ) : (
+        <div style={{background:"rgba(255,255,255,0.02)",border:"1px solid #ffffff08",borderRadius:14,padding:"24px 20px",textAlign:"center",marginBottom:20}}>
+          <div style={{fontSize:36,marginBottom:10}}>⚔️</div>
+          <div style={{fontSize:14,color:"#555",fontStyle:"italic",lineHeight:1.7}}>
+            No active encounter.<br/>
+            <span style={{fontSize:12,color:"#444"}}>Summon one and let the DM decide your fate.</span>
+          </div>
+        </div>
+      )}
+
+      {/* Summon button */}
+      <button onClick={summonEnemy} disabled={summoning} style={{
+        width:"100%",padding:"14px 0",
+        border:"1px solid #e8734a55",borderRadius:12,
+        background:summoning?"#111118":"linear-gradient(135deg,rgba(232,115,74,0.15),rgba(232,115,74,0.05))",
+        color:summoning?"#444":"#e8734a",
+        fontFamily:"inherit",fontSize:14,fontWeight:700,letterSpacing:2,
+        cursor:summoning?"wait":"pointer",marginBottom:16,transition:"all 0.2s",
+      }}>
+        {summoning
+          ? "🎲 The DM stirs..."
+          : active
+          ? "🎲 SUMMON NEXT ENEMY (QUEUE)"
+          : "🎲 SUMMON AN ENCOUNTER"}
+      </button>
+
+      {/* Queue */}
+      {queue.length>0&&(
+        <div style={{marginBottom:20}}>
+          <div style={{fontSize:11,color:"#555",letterSpacing:2,marginBottom:8}}>QUEUED ({queue.length})</div>
+          <div style={{display:"flex",flexDirection:"column",gap:6}}>
+            {queue.map((e,i)=>(
+              <div key={i} style={{background:"rgba(255,255,255,0.02)",border:"1px solid #ffffff08",borderRadius:10,padding:"11px 14px",display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+                <span style={{color:"#777"}}>{e.emoji} {e.name}</span>
+                <span style={{fontSize:12,color:"#555"}}>❤️ {e.maxHp} HP</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* Defeated */}
+      {defeated.length>0&&(
+        <div>
+          <div style={{fontSize:11,color:"#555",letterSpacing:2,marginBottom:8}}>DEFEATED ({defeated.length})</div>
+          <div style={{display:"flex",flexDirection:"column",gap:5}}>
+            {[...defeated].reverse().map((e,i)=>(
+              <div key={i} style={{background:"rgba(255,255,255,0.015)",border:"1px solid #ffffff06",borderRadius:10,padding:"10px 14px",display:"flex",justifyContent:"space-between",alignItems:"center",opacity:0.55}}>
+                <span style={{color:"#555"}}>☠️ {e.name}</span>
+                <span style={{fontSize:11,color:"#3a3a3a"}}>{e.maxHp} HP · {e.defeatedAt||""}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+  </script>
+
+  <!-- Part 3: JSX Timer + Main app components -->
+  <script type="text/babel" data-presets="react">
+    document.getElementById('loadmsg').textContent='Finishing (4/4)...';
+// ── Rest Timer (lives inside the running quest timer) ────────────────────────
+function RestTimer() {
+  const [restPhase, setRestPhase] = useState("idle"); // idle | input | running | done
+  const [inputSecs, setInputSecs] = useState("");
+  const [totalSecs, setTotalSecs] = useState(0);
+  const [remaining, setRemaining] = useState(0);
+
+  const rafRef      = useRef(null);
+  const startMsRef  = useRef(0);
+  const baseRef     = useRef(0);
+
+  const tickFn = useRef(null);
+  tickFn.current = () => {
+    const elapsed = baseRef.current + (Date.now() - startMsRef.current) / 1000;
+    const left    = Math.max(totalSecs - elapsed, 0);
+    setRemaining(left);
+    if (left <= 0) { setRestPhase("done"); return; }
+    rafRef.current = requestAnimationFrame(tickFn.current);
+  };
+
+  useEffect(() => {
+    if (restPhase === "running") {
+      startMsRef.current = Date.now();
+      rafRef.current = requestAnimationFrame(tickFn.current);
+    } else {
+      cancelAnimationFrame(rafRef.current);
+    }
+    return () => cancelAnimationFrame(rafRef.current);
+  }, [restPhase]);
+
+  function startRest() {
+    const secs = parseInt(inputSecs);
+    if (!secs || secs < 1) return;
+    baseRef.current = 0;
+    setTotalSecs(secs);
+    setRemaining(secs);
+    setRestPhase("running");
+    setInputSecs("");
+  }
+
+  function dismiss() {
+    cancelAnimationFrame(rafRef.current);
+    baseRef.current = 0;
+    setRemaining(0);
+    setTotalSecs(0);
+    setRestPhase("idle");
+  }
+
+  const pct = totalSecs > 0 ? Math.max(remaining / totalSecs, 0) : 0;
+  const isDone = restPhase === "done";
+
+  // ── idle: just a small button ──
+  if (restPhase === "idle") return (
+    <button onClick={()=>setRestPhase("input")} style={{
+      width:"100%", padding:"11px 0",
+      border:"1px solid #7eb8c944", borderRadius:10,
+      background:"rgba(126,184,201,0.06)", color:"#7eb8c9",
+      fontFamily:"inherit", fontSize:13, fontWeight:700,
+      letterSpacing:1, cursor:"pointer",
+    }}>💤 REST TIMER</button>
+  );
+
+  // ── input: type seconds ──
+  if (restPhase === "input") return (
+    <div style={{background:"rgba(126,184,201,0.06)",border:"1px solid #7eb8c933",borderRadius:12,padding:"14px 16px"}}>
+      <div style={{fontSize:11,color:"#7eb8c9",letterSpacing:2,marginBottom:10}}>💤 REST DURATION (SECONDS)</div>
+      <div style={{display:"flex",gap:8}}>
+        <input
+          type="number" min={1} max={600}
+          value={inputSecs} onChange={e=>setInputSecs(e.target.value)}
+          onKeyDown={e=>e.key==="Enter"&&startRest()}
+          placeholder="e.g. 90"
+          autoFocus
+          style={{flex:1,padding:"11px 14px",background:"rgba(255,255,255,0.04)",border:"1px solid #ffffff11",borderRadius:10,color:"#e4ddd0",fontFamily:"inherit",fontSize:20,boxSizing:"border-box"}}
+        />
+        <button onClick={startRest} style={{padding:"11px 18px",border:"none",borderRadius:10,background:"#7eb8c9",color:"#0c0c14",fontFamily:"inherit",fontSize:14,fontWeight:800,cursor:"pointer"}}>GO</button>
+        <button onClick={()=>setRestPhase("idle")} style={{padding:"11px 14px",border:"1px solid #ffffff0a",borderRadius:10,background:"transparent",color:"#444",fontFamily:"inherit",fontSize:13,cursor:"pointer"}}>✕</button>
+      </div>
+    </div>
+  );
+
+  // ── running / done: big countdown ──
+  return (
+    <div style={{
+      background: isDone ? "rgba(106,170,100,0.1)" : "rgba(126,184,201,0.06)",
+      border: `1px solid ${isDone?"#6aaa6466":"#7eb8c933"}`,
+      borderRadius:14, padding:"16px",
+      animation: isDone ? "pulse 0.6s ease infinite" : "none",
+    }}>
+      <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:10}}>
+        <div style={{fontSize:11,color:isDone?"#6aaa64":"#7eb8c9",letterSpacing:2,fontWeight:700}}>
+          {isDone ? "✅ REST COMPLETE" : "💤 RESTING"}
+        </div>
+        <button onClick={dismiss} style={{background:"transparent",border:"none",color:"#444",fontSize:16,cursor:"pointer",padding:"0 2px"}}>✕</button>
+      </div>
+
+      {/* Progress bar */}
+      <div style={{background:"#ffffff0e",borderRadius:99,height:6,overflow:"hidden",marginBottom:12}}>
+        <div style={{
+          width:`${pct*100}%`, height:"100%",
+          background:isDone?"#6aaa64":"#7eb8c9",
+          borderRadius:99, transition:"width 0.25s linear",
+        }}/>
+      </div>
+
+      <div style={{textAlign:"center"}}>
+        <div style={{
+          fontSize:48, fontWeight:800, fontFamily:"monospace", letterSpacing:2,
+          color: isDone ? "#6aaa64" : remaining <= 10 ? "#e8734a" : "#e4ddd0",
+          animation: remaining <= 10 && !isDone ? "pulse 1s ease infinite" : "none",
+        }}>
+          {isDone ? "GO!" : fmt(remaining)}
+        </div>
+        {!isDone && (
+          <div style={{fontSize:11,color:"#444",marginTop:4}}>of {fmt(totalSecs)}</div>
+        )}
+      </div>
+
+      {isDone && (
+        <button onClick={dismiss} style={{
+          width:"100%", marginTop:12, padding:"10px 0",
+          border:"none", borderRadius:10,
+          background:"linear-gradient(135deg,#2a4e2a,#142814)",
+          color:"#6aaa64", fontFamily:"inherit", fontSize:14, fontWeight:700,
+          letterSpacing:1, cursor:"pointer",
+        }}>▶ NEXT SET</button>
+      )}
+    </div>
+  );
+}
+
+// ── Running screen (quest timer + rest timer) ─────────────────────────────────
+function RunningScreen({ phase, timerMode, ringDisplay, ringLabel, circumference, strokeOffset, elapsed, laps, setLaps, baseSecsRef, startMsRef, togglePause, finish }) {
+  return (
+    <div style={{paddingTop:8,display:"flex",flexDirection:"column",alignItems:"center",gap:14}}>
+
+      {/* Quest ring */}
+      <div style={{position:"relative",width:190,height:190}}>
+        <svg width={190} height={190} style={{transform:"rotate(-90deg)"}}>
+          <circle cx={95} cy={95} r={88} fill="none" stroke="#ffffff08" strokeWidth={10}/>
+          <circle cx={95} cy={95} r={88} fill="none" stroke={phase==="paused"?"#444":"#d4af37"} strokeWidth={10} strokeLinecap="round" strokeDasharray={circumference} strokeDashoffset={strokeOffset} style={{transition:"stroke 0.3s"}}/>
+        </svg>
+        <div style={{position:"absolute",inset:0,display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center"}}>
+          <div style={{fontSize:10,color:"#444",letterSpacing:2,marginBottom:2}}>QUEST</div>
+          <div style={{fontSize:34,fontWeight:800,color:phase==="paused"?"#444":"#e4ddd0",fontFamily:"monospace",letterSpacing:1}}>{ringDisplay}</div>
+          <div style={{fontSize:10,color:"#444",letterSpacing:2,marginTop:2}}>{ringLabel}</div>
+        </div>
+      </div>
+
+      {timerMode==="down"&&phase!=="paused"&&<div style={{fontSize:12,color:"#555"}}>Elapsed: <span style={{color:"#777"}}>{fmt(elapsed)}</span></div>}
+      {timerMode==="up"&&phase!=="paused"&&<div style={{fontSize:11,color:"#444",fontStyle:"italic"}}>No target — stop when done</div>}
+
+      {/* Rest timer — only visible when running, not paused */}
+      {phase==="running" && (
+        <div style={{width:"100%"}}>
+          <RestTimer/>
+        </div>
+      )}
+
+      {/* Task clicker */}
+      <div style={{background:"rgba(255,255,255,0.03)",border:"1px solid #ffffff0a",borderRadius:16,padding:"16px 18px",width:"100%",boxSizing:"border-box"}}>
+        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:10}}>
+          <div style={{fontSize:11,color:"#555",letterSpacing:2}}>TASKS</div>
+          <div style={{fontSize:20,fontWeight:800,color:"#d4af37"}}>{laps.length}</div>
+        </div>
+        {laps.length>0&&<div style={{marginBottom:10,display:"flex",flexDirection:"column",gap:3,maxHeight:90,overflowY:"auto"}}>
+          {laps.map((lap,i)=>{
+            const duration=i===0?lap.secs:lap.secs-laps[i-1].secs;
+            return (
+              <div key={i} style={{display:"flex",justifyContent:"space-between",fontSize:11,color:"#666",padding:"2px 0",borderBottom:"1px solid #ffffff06"}}>
+                <span style={{color:"#777"}}>Task {lap.n}</span>
+                <span style={{fontFamily:"monospace",color:"#555"}}>{fmt(duration)}</span>
+                <span style={{fontFamily:"monospace",color:"#3a3a3a"}}>@ {fmt(lap.secs)}</span>
+              </div>
+            );
+          })}
+        </div>}
+        <div style={{display:"flex",gap:8,alignItems:"center"}}>
+          <button onClick={()=>setLaps(l=>l.length>0?l.slice(0,-1):l)} style={{width:44,height:44,borderRadius:10,border:"1px solid #ffffff15",background:"rgba(255,255,255,0.04)",color:"#666",fontSize:20,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>−</button>
+          <button onClick={()=>{
+            const secs=baseSecsRef.current+(Date.now()-startMsRef.current)/1000;
+            setLaps(l=>[...l,{n:l.length+1,secs}]);
+          }} style={{flex:1,height:44,borderRadius:10,border:"none",background:"linear-gradient(135deg,#c8a020,#a07010)",color:"#0c0c14",fontSize:14,fontWeight:800,cursor:"pointer",letterSpacing:1,fontFamily:"inherit"}}>+ TASK</button>
+          <div style={{width:44,flexShrink:0}}/>
+        </div>
+      </div>
+
+      {/* Quest controls */}
+      <div style={{display:"flex",gap:10,width:"100%"}}>
+        <button onClick={togglePause} style={{flex:1,padding:"13px 0",borderRadius:10,border:"1px solid #ffffff15",background:"rgba(255,255,255,0.05)",color:"#e4ddd0",fontFamily:"inherit",fontSize:14,fontWeight:700,letterSpacing:1,cursor:"pointer"}}>{phase==="paused"?"▶ RESUME":"⏸ PAUSE"}</button>
+        <button onClick={finish} style={{flex:1,padding:"13px 0",borderRadius:10,border:"1px solid #e8734a44",background:"rgba(232,115,74,0.08)",color:"#e8734a",fontFamily:"inherit",fontSize:14,fontWeight:700,letterSpacing:1,cursor:"pointer"}}>■ FINISH</button>
+      </div>
+    </div>
+  );
+}
+
+// ── Timer ─────────────────────────────────────────────────────────────────────
+function TimerTab({ onSessionComplete, submitting }) {
+  // Restore from session if available (survives rotation / app-switch)
+  const saved = loadTimerSession();
+
+  const [phase, setPhase]           = useState(saved?.phase ?? "setup");
+  const [timerMode, setTimerMode]   = useState(saved?.timerMode ?? "down");
+  const [targetSecs, setTargetSecs] = useState(saved?.targetSecs ?? 25*60);
+  const [customMinutes, setCustomMinutes] = useState(saved?.customMinutes ?? 25);
+  const [laps, setLaps]             = useState(saved?.laps ?? []);
+
+  // For elapsed: if we were running, compute how much real time passed since the page was hidden
+  const restoredElapsed = saved
+    ? saved.phase === "running"
+      ? saved.baseSecsAtSave + (Date.now() - saved.savedAtMs) / 1000
+      : saved.baseSecsAtSave
+    : 0;
+  const [elapsed, setElapsed] = useState(restoredElapsed);
+
+  const rafRef        = useRef(null);
+  const startMsRef    = useRef(saved?.phase === "running" ? Date.now() : 0);
+  const baseSecsRef   = useRef(restoredElapsed);
+  const timerModeRef  = useRef(saved?.timerMode ?? "down");
+  const targetSecsRef = useRef(saved?.targetSecs ?? 25*60);
+
+  useEffect(()=>{timerModeRef.current=timerMode;},[timerMode]);
+  useEffect(()=>{targetSecsRef.current=targetSecs;},[targetSecs]);
+
+  // Persist timer state to sessionStorage whenever key values change
+  useEffect(()=>{
+    if (phase === "setup") { clearTimerSession(); return; }
+    saveTimerSession({
+      phase, timerMode, targetSecs, customMinutes, laps,
+      baseSecsAtSave: baseSecsRef.current,
+      savedAtMs: Date.now(),
+    });
+  }, [phase, timerMode, targetSecs, laps]);
+
+  // Also save on visibility change (app switch / screen off)
+  useEffect(()=>{
+    function onHide() {
+      if (phase === "setup" || phase === "done") return;
+      // Snapshot current elapsed into baseSecsRef before page is hidden
+      if (phase === "running") {
+        baseSecsRef.current += (Date.now() - startMsRef.current) / 1000;
+        startMsRef.current = Date.now();
+      }
+      saveTimerSession({
+        phase: phase === "running" ? "running" : "paused",
+        timerMode, targetSecs, customMinutes, laps,
+        baseSecsAtSave: baseSecsRef.current,
+        savedAtMs: Date.now(),
+      });
+    }
+    document.addEventListener("visibilitychange", onHide);
+    return () => document.removeEventListener("visibilitychange", onHide);
+  }, [phase, timerMode, targetSecs, laps]);
+
+  const tickFn = useRef(null);
+  tickFn.current = () => {
+    const now = Date.now();
+    const total = baseSecsRef.current + (now - startMsRef.current)/1000;
+    setElapsed(total);
+    if (timerModeRef.current==="down" && total>=targetSecsRef.current) {
+      setElapsed(targetSecsRef.current); setPhase("done"); return;
+    }
+    rafRef.current = requestAnimationFrame(tickFn.current);
+  };
+
+  useEffect(()=>{
+    if (phase==="running") {
+      startMsRef.current = Date.now();
+      rafRef.current = requestAnimationFrame(tickFn.current);
+    } else {
+      cancelAnimationFrame(rafRef.current);
+      if (phase==="paused") baseSecsRef.current += (Date.now()-startMsRef.current)/1000;
+    }
+    return ()=>cancelAnimationFrame(rafRef.current);
+  },[phase]);
+
+  function begin() { baseSecsRef.current=0; startMsRef.current=Date.now(); setElapsed(0); setLaps([]); setPhase("running"); }
+  function togglePause() { setPhase(p=>p==="running"?"paused":"running"); }
+  function finish() { cancelAnimationFrame(rafRef.current); baseSecsRef.current+=(Date.now()-startMsRef.current)/1000; setPhase("done"); }
+  function reset() { cancelAnimationFrame(rafRef.current); baseSecsRef.current=0; startMsRef.current=0; setElapsed(0); setLaps([]); setPhase("setup"); clearTimerSession(); }
+
+  const circumference = 2*Math.PI*88;
+  const elapsedMins = Math.max(1, Math.round(elapsed/60));
+  const ringProgress = timerMode==="down" ? Math.min(elapsed/targetSecs,1) : Math.min(elapsed/Math.max(targetSecs,1),1);
+  const strokeOffset = circumference*(1-ringProgress);
+  const ringDisplay  = timerMode==="down" ? fmt(Math.max(targetSecs-elapsed,0)) : fmt(elapsed);
+  const ringLabel    = timerMode==="down" ? (phase==="paused"?"PAUSED":"REMAINING") : (phase==="paused"?"PAUSED":"ELAPSED");
+
+  if (phase==="setup") return (
+    <div style={{paddingTop:8}}>
+      <div style={{display:"flex",gap:4,marginBottom:18}}>
+        {[["down","⏳ Count Down"],["up","⏱ Count Up"]].map(([m,l])=>(
+          <button key={m} onClick={()=>setTimerMode(m)} style={{
+            flex:1,padding:"11px 0",border:"none",borderRadius:8,cursor:"pointer",
+            fontFamily:"inherit",fontSize:12,fontWeight:700,letterSpacing:1,
+            background:timerMode===m?"#d4af37":"rgba(255,255,255,0.04)",
+            color:timerMode===m?"#0c0c14":"#555",transition:"all 0.2s",
+          }}>{l}</button>
+        ))}
+      </div>
+      {timerMode==="down"&&<>
+        <div style={{fontSize:11,color:"#555",letterSpacing:2,marginBottom:12}}>SET DURATION</div>
+        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8,marginBottom:16}}>
+          {TIMER_PRESETS.map(p=>(
+            <button key={p.mins} onClick={()=>{setCustomMinutes(p.mins);setTargetSecs(p.mins*60);}} style={{
+              padding:"12px 8px",border:`1px solid ${customMinutes===p.mins?"#d4af3766":"#ffffff11"}`,
+              borderRadius:10,background:customMinutes===p.mins?"rgba(212,175,55,0.1)":"rgba(255,255,255,0.03)",
+              color:customMinutes===p.mins?"#d4af37":"#888",fontFamily:"inherit",fontSize:13,fontWeight:700,cursor:"pointer",transition:"all 0.15s",
+            }}>
+              <div style={{fontSize:18,marginBottom:3}}>{p.mins}m</div>
+              <div style={{fontSize:10,letterSpacing:1,opacity:0.7}}>{p.label.toUpperCase()}</div>
+            </button>
+          ))}
+        </div>
+        <div style={{marginBottom:20}}>
+          <label style={{fontSize:11,color:"#555",letterSpacing:2,display:"block",marginBottom:7}}>OR CUSTOM (MINUTES)</label>
+          <input type="number" min={1} max={480} value={customMinutes}
+            onChange={e=>{const v=Math.max(1,parseInt(e.target.value)||1);setCustomMinutes(v);setTargetSecs(v*60);}}
+            style={{width:"100%",padding:"12px 14px",background:"rgba(255,255,255,0.04)",border:"1px solid #ffffff11",borderRadius:10,color:"#e4ddd0",fontFamily:"inherit",fontSize:18,boxSizing:"border-box"}}
+          />
+        </div>
+      </>}
+      {timerMode==="up"&&<div style={{background:"rgba(255,255,255,0.03)",border:"1px solid #ffffff0a",borderRadius:12,padding:"20px",marginBottom:20,textAlign:"center"}}>
+        <div style={{fontSize:36,marginBottom:10}}>⏱</div>
+        <div style={{fontSize:14,color:"#888",lineHeight:1.7}}>Timer starts from zero.<br/><span style={{color:"#555",fontSize:12}}>Stop when you're done.</span></div>
+      </div>}
+      <button onClick={begin} style={{width:"100%",padding:"16px 0",border:"none",borderRadius:12,background:"linear-gradient(135deg,#3a2a6e,#1e1040)",color:"#e4ddd0",fontFamily:"inherit",fontSize:16,fontWeight:700,letterSpacing:2,cursor:"pointer"}}>⚔ BEGIN QUEST</button>
+    </div>
+  );
+
+  if (phase==="running"||phase==="paused") return (
+    <RunningScreen
+      phase={phase} timerMode={timerMode}
+      ringDisplay={ringDisplay} ringLabel={ringLabel}
+      circumference={circumference} strokeOffset={strokeOffset}
+      elapsed={elapsed} laps={laps} setLaps={setLaps}
+      baseSecsRef={baseSecsRef} startMsRef={startMsRef}
+      togglePause={togglePause} finish={finish}
+    />
+  );
+
+  if (phase==="done") return (
+    <div style={{paddingTop:8}}>
+      <div style={{background:"linear-gradient(135deg,rgba(212,175,55,0.1),rgba(212,175,55,0.04))",border:"1px solid #d4af3733",borderRadius:14,padding:"18px",marginBottom:20,textAlign:"center"}}>
+        <div style={{fontSize:28,marginBottom:6}}>⚔️</div>
+        <div style={{fontSize:26,fontWeight:800,color:"#d4af37"}}>{fmt(elapsed)}</div>
+        <div style={{fontSize:13,color:"#888",marginTop:4}}>Quest complete{laps.length>0?` · ${laps.length} task${laps.length!==1?"s":""} logged`:""}</div>
+        <div style={{fontSize:12,color:"#555",marginTop:6,fontStyle:"italic"}}>Now tell the DM what you conquered.</div>
+      </div>
+      <LogForm defaultMinutes={elapsedMins} laps={laps} submitting={submitting} onSubmit={onSessionComplete} onCancel={reset}/>
+    </div>
+  );
+}
+
+  </script>
+
+  <!-- Part 4: Main app + mount -->
+  <script type="text/babel" data-presets="react">
+// ── Main App ──────────────────────────────────────────────────────────────────
+export default function ChoreQuest() {
+  const [data, setData]             = useState(null);
+  const [loading, setLoading]       = useState(true);
+  const [tab, setTab]               = useState("character");
+  const [charTab, setCharTab]       = useState("classes"); // classes | skills | attributes
+  const [submitting, setSubmitting] = useState(false);
+  const [lastResult, setLastResult] = useState(null);
+  const [victoryResult, setVictoryResult] = useState(null);
+  const [showSave, setShowSave]       = useState(false);
+  const [toast, setToast]           = useState(null);
+  const toastRef = useRef();
+
+  useEffect(()=>{ loadData().then(d=>{ setData(d||freshData()); setLoading(false); }); },[]);
+
+  // Auto-copy save to clipboard when app is hidden (rotation, app switch)
+  // so it's ready to paste back in if the page fully reloads
+  useEffect(()=>{
+    function onHide() {
+      if (!data || document.visibilityState !== "hidden") return;
+      try { navigator.clipboard.writeText(exportSave(data)); } catch {}
+    }
+    document.addEventListener("visibilitychange", onHide);
+    return () => document.removeEventListener("visibilitychange", onHide);
+  }, [data]);
+
+  function showToast(msg) {
+    setToast(msg);
+    clearTimeout(toastRef.current);
+    toastRef.current = setTimeout(()=>setToast(null), 5000);
+  }
+
+  function applyResult(result, desc, mins, laps=[]) {
+    setData(prev => {
+      const newXp      = {...prev.xp};
+      const newSkillXp = {...(prev.skillXp||{})};
+      const newAttrXp  = {...(prev.attrXp||{})};
+      const newPending = [...(prev.pending||[])];
+
+      // Class XP
+      Object.entries(result.xp||{}).forEach(([id,v])=>{ if(v>0) newXp[id]=(newXp[id]||0)+v; });
+
+      // Skill XP (only already-discovered)
+      Object.entries(result.skillXp||{}).forEach(([id,v])=>{
+        if(v>0 && id in newSkillXp) newSkillXp[id]=(newSkillXp[id]||0)+v;
+      });
+
+      // Attribute XP (only already-discovered)
+      Object.entries(result.attrXp||{}).forEach(([id,v])=>{
+        if(v>0 && id in newAttrXp) newAttrXp[id]=(newAttrXp[id]||0)+v;
+      });
+
+      // Auto-discover known skills/attributes flagged by DM
+      (result.discover||[]).forEach(id=>{
+        const isSkill = KNOWN_SKILLS.find(s=>s.id===id);
+        const isAttr  = KNOWN_ATTRIBUTES.find(a=>a.id===id);
+        if (isSkill && !(id in newSkillXp)) newSkillXp[id]=0;
+        if (isAttr  && !(id in newAttrXp))  newAttrXp[id]=0;
+      });
+
+      // Queue new skill/attribute suggestions for approval
+      (result.suggestNew||[]).forEach(s=>{
+        const alreadyPending = newPending.some(p=>p.id===s.id);
+        const alreadyKnown   = KNOWN_SKILLS.find(k=>k.id===s.id)||KNOWN_ATTRIBUTES.find(k=>k.id===s.id);
+        if (!alreadyPending && !alreadyKnown) newPending.push(s);
+      });
+
+      const entry = {
+        id:Date.now(), description:desc, minutes:mins,
+        xpGained:result.xp||{},
+        skillXpGained:result.skillXp||{},
+        attrXpGained:result.attrXp||{},
+        discovered:result.discover||[],
+        narration:result.narration, dmNote:result.dmNote||"",
+        date:new Date().toLocaleDateString("en-GB",{day:"numeric",month:"short",year:"numeric"}),
+      };
+      const next = {...prev, xp:newXp, skillXp:newSkillXp, attrXp:newAttrXp, pending:newPending, log:[entry,...prev.log].slice(0,200)};
+      saveData(next);
+      return next;
+    });
+    setLastResult(result);
+
+    // Deal combat damage equal to tasks logged this session
+    const tasksDone = laps && laps.length > 0 ? laps.length : 0;
+    if (tasksDone > 0) dealCombatDamage(tasksDone, mins);
+
+    // Auto-encounter: DM may surprise the player after sessions without an active fight
+    // Trigger roughly every 3 sessions when no enemy is active
+    setData(d => {
+      const c = d.combat || { active:null, queue:[], defeated:[] };
+      if (c.active) return d; // already fighting
+      const sessionsSinceFight = (d.log?.filter(e=>!e.description.startsWith("⚔️")).length || 0) % 3;
+      if (sessionsSinceFight !== 0) return d; // not time yet
+      // Fire async — we just trigger it, state update happens inside
+      const totalLvl = CLASSES.reduce((s,cl)=>s+getLevel(d.xp[cl.id]||0).level,0);
+      callDMEncounter(d.log||[], totalLvl, c.defeated?.length||0).then(enemy => {
+        const full = {...enemy, hpDealt:0, startedAt:new Date().toISOString()};
+        setData(prev2 => {
+          const c2 = prev2.combat || { active:null, queue:[], defeated:[] };
+          if (c2.active) return prev2; // someone beat us to it
+          const next = {...prev2, combat:{...c2, active:full}};
+          saveData(next); return next;
+        });
+        showToast(`⚔️ A new enemy appears!\n${enemy.emoji} ${enemy.name} (${enemy.maxHp} HP)\n"${enemy.intro}"`);
+      }).catch(()=>{});
+      return d;
+    });
+
+    // Toast
+    const classEarned = Object.entries(result.xp||{}).filter(([,v])=>v>0).map(([id,v])=>{const c=CLASSES.find(x=>x.id===id);return `${c.emoji}+${v}`;});
+    const _allDefs = [...KNOWN_SKILLS,...(data.customSkills||[]),...KNOWN_ATTRIBUTES,...(data.customAttrs||[])];
+    const skillEarned = Object.entries(result.skillXp||{}).filter(([,v])=>v>0).map(([id,v])=>{const s=_allDefs.find(x=>x.id===id);return s?`${s.emoji}+${v}`:null;}).filter(Boolean);
+    const discovered  = (result.discover||[]).map(id=>{const s=_allDefs.find(x=>x.id===id);return s?`✨ ${s.name} discovered!`:null;}).filter(Boolean);
+    const pending     = (result.suggestNew||[]).map(s=>`🔔 New ${s.type} suggested: ${s.name}`);
+    const parts = [...classEarned,...skillEarned].join("  ") + (discovered.length?"\n"+discovered.join("\n"):"") + (pending.length?"\n"+pending.join("\n"):"");
+    if (parts.trim()) showToast(parts.trim());
+    setTab("character");
+  }
+
+  function approvePending(item) {
+    setData(prev=>{
+      const newSkillXp    = {...(prev.skillXp||{})};
+      const newAttrXp     = {...(prev.attrXp||{})};
+      const newCustomSkills = [...(prev.customSkills||[])];
+      const newCustomAttrs  = [...(prev.customAttrs||[])];
+      if (item.type==="skill") {
+        newSkillXp[item.id] = 0;
+        // Save custom metadata if not in the hardcoded list
+        if (!KNOWN_SKILLS.find(s=>s.id===item.id) && !newCustomSkills.find(s=>s.id===item.id)) {
+          newCustomSkills.push({ id:item.id, name:item.name, emoji:item.emoji, color:"#9b8ec4" });
+        }
+      }
+      if (item.type==="attribute") {
+        newAttrXp[item.id] = 0;
+        if (!KNOWN_ATTRIBUTES.find(a=>a.id===item.id) && !newCustomAttrs.find(a=>a.id===item.id)) {
+          newCustomAttrs.push({ id:item.id, name:item.name, emoji:item.emoji, color:"#6aaa64" });
+        }
+      }
+      const newPending = prev.pending.filter(p=>p.id!==item.id);
+      const next = {...prev, skillXp:newSkillXp, attrXp:newAttrXp, pending:newPending, customSkills:newCustomSkills, customAttrs:newCustomAttrs};
+      saveData(next); return next;
+    });
+    showToast(`✨ ${item.name} added to your character!`);
+  }
+
+  function rejectPending(item) {
+    setData(prev=>{ const next={...prev,pending:prev.pending.filter(p=>p.id!==item.id)}; saveData(next); return next; });
+  }
+
+  // ── Combat handlers ─────────────────────────────────────────────────────────
+  function summonEnemy(enemy) {
+    setData(prev => {
+      const c = prev.combat || { active:null, queue:[], defeated:[] };
+      let next;
+      if (!c.active) {
+        next = { ...prev, combat: { ...c, active: enemy } };
+      } else {
+        next = { ...prev, combat: { ...c, queue: [...c.queue, enemy] } };
+      }
+      saveData(next); return next;
+    });
+  }
+
+  function abandonEnemy() {
+    setData(prev => {
+      const c = prev.combat || { active:null, queue:[], defeated:[] };
+      const [nextActive, ...rest] = c.queue;
+      const next = { ...prev, combat: { ...c, active: nextActive||null, queue: rest } };
+      saveData(next); return next;
+    });
+  }
+
+  async function dealCombatDamage(tasksDone, minutes) {
+    setData(prev => {
+      const c = prev.combat;
+      if (!c?.active) return prev;
+      const enemy = c.active;
+      const newDealt = enemy.hpDealt + tasksDone;
+      if (newDealt >= enemy.maxHp) {
+        // Defeated — will be handled async below; just return prev for now
+        return prev;
+      }
+      const updatedEnemy = { ...enemy, hpDealt: newDealt };
+      const next = { ...prev, combat: { ...c, active: updatedEnemy } };
+      saveData(next); return next;
+    });
+
+    // Check defeat asynchronously so we can call AI
+    setData(prev => {
+      const c = prev.combat;
+      if (!c?.active) return prev;
+      const enemy = c.active;
+      const newDealt = enemy.hpDealt + tasksDone;
+      if (newDealt < enemy.maxHp) return prev; // not dead yet
+      // Mark as defeated, promote queue
+      const [nextActive, ...rest] = c.queue;
+      const defeatedEnemy = { ...enemy, hpDealt: enemy.maxHp, defeatedAt: new Date().toLocaleDateString("en-GB",{day:"numeric",month:"short",year:"numeric"}) };
+      const next = { ...prev, combat: { active: nextActive||null, queue: rest, defeated: [...(c.defeated||[]), defeatedEnemy] } };
+      saveData(next);
+      // Fire AI victory call (side effect inside setState is bad practice but pragmatic here)
+      callDMVictory(enemy, newDealt, minutes).then(result => {
+        setVictoryResult({ result, enemy });
+        // Apply bonus XP
+        setData(d2 => {
+          const newXp = {...d2.xp};
+          Object.entries(result.xp||{}).forEach(([id,v])=>{ if(v>0) newXp[id]=(newXp[id]||0)+v; });
+          const bonusEntry = {
+            id: Date.now()+1,
+            description: `⚔️ Defeated: ${enemy.emoji} ${enemy.name}`,
+            minutes: 0, xpGained: result.xp||{}, skillXpGained:{}, attrXpGained:{}, discovered:[],
+            narration: result.narration, dmNote: result.dmNote||"",
+            date: new Date().toLocaleDateString("en-GB",{day:"numeric",month:"short",year:"numeric"}),
+          };
+          const d3 = {...d2, xp:newXp, log:[bonusEntry,...d2.log]};
+          saveData(d3); return d3;
+        });
+        const bonusTotal = Object.values(result.xp||{}).reduce((a,b)=>a+b,0);
+        showToast(`☠️ ${enemy.name} defeated!\n+${bonusTotal} bonus XP`);
+        setTab("character");
+      }).catch(()=>{ showToast(`☠️ ${enemy.name} defeated!`); setTab("character"); });
+      return next;
+    });
+  }
+
+  function handleImport(parsed) {
+    // Run migration to fill any missing fields
+    const migrated = {
+      xp:           Object.fromEntries(CLASSES.map(c=>[c.id, parsed.xp?.[c.id] ?? 0])),
+      skillXp:      parsed.skillXp      ?? {},
+      attrXp:       parsed.attrXp       ?? {},
+      pending:      parsed.pending      ?? [],
+      customSkills: parsed.customSkills ?? [],
+      customAttrs:  parsed.customAttrs  ?? [],
+      log:          parsed.log          ?? [],
+      started:      parsed.started      ?? new Date().toISOString(),
+      combat:       parsed.combat       ?? { active:null, queue:[], defeated:[] },
+    };
+    setData(migrated);
+    saveData(migrated);
+    showToast("✅ Save restored successfully!");
+  }
+
+  async function handleSubmit({ mode, text, presetIdx, minutes, laps }) {
+    setSubmitting(true);
+    try {
+      let desc, isMatrimony;
+      if (mode==="ai") { desc=text; isMatrimony=/emily|wife|love|care/i.test(text); }
+      else { const c=PRESETS[presetIdx]; desc=c.label; isMatrimony=c.classes.includes("matrimony"); }
+      const discoveredSkills = Object.keys(data.skillXp||{});
+      const discoveredAttrs  = Object.keys(data.attrXp||{});
+      const result = await callDM(desc, minutes, laps, isMatrimony, discoveredSkills, discoveredAttrs);
+      applyResult(result, desc, minutes, laps);
+    } catch(e) {
+      showToast("⚠️ The DM is momentarily unreachable. Try again.");
+    }
+    setSubmitting(false);
+  }
+
+  if (loading) return (
+    <div style={{minHeight:"100vh",background:"#0c0c14",display:"flex",alignItems:"center",justifyContent:"center",color:"#444",fontFamily:"Palatino,Georgia,serif",fontSize:18}}>
+      Awakening your chronicle...
+    </div>
+  );
+
+  const totalClassLevel = CLASSES.reduce((s,c)=>s+getLevel(data.xp[c.id]||0).level,0);
+  const pendingCount    = (data.pending||[]).length;
+  const NAV = [["character","📜 Character"],["timer","⏱ Timer"],["add","⚔ Log Quest"],["combat","⚔️ Combat"],["log","🗂 Chronicle"],["save","💾 Save"]];
+
+  // Build discovered skill/attr lists with metadata
+  const allSkillDefs = [...KNOWN_SKILLS, ...(data.customSkills||[])];
+  const allAttrDefs  = [...KNOWN_ATTRIBUTES, ...(data.customAttrs||[])];
+
+  const discoveredSkills = Object.entries(data.skillXp||{}).map(([id,xp])=>{
+    const known = allSkillDefs.find(s=>s.id===id) || (data.pending||[]).find(p=>p.id===id&&p.type==="skill");
+    if (!known) return null;
+    return { ...known, xp };
+  }).filter(Boolean);
+
+  const discoveredAttrs = Object.entries(data.attrXp||{}).map(([id,xp])=>{
+    const known = allAttrDefs.find(a=>a.id===id) || (data.pending||[]).find(p=>p.id===id&&p.type==="attribute");
+    if (!known) return null;
+    return { ...known, xp };
+  }).filter(Boolean);
+
+  return (
+    <div style={{minHeight:"100vh",background:"#0c0c14",backgroundImage:"radial-gradient(ellipse at 15% 10%,#130d22 0%,transparent 55%),radial-gradient(ellipse at 85% 90%,#0c140d 0%,transparent 55%)",color:"#e4ddd0",fontFamily:"Palatino,Georgia,serif",paddingBottom:88}}>
+      <style>{`
+        @keyframes fadein{from{opacity:0;transform:translateX(-50%) translateY(8px)}to{opacity:1;transform:translateX(-50%) translateY(0)}}
+        @keyframes pulse{0%,100%{opacity:1}50%{opacity:0.4}}
+        @keyframes glow{0%,100%{box-shadow:0 0 8px #d4af3733}50%{box-shadow:0 0 20px #d4af3766}}
+        input,textarea{outline:none;}
+        input::placeholder,textarea::placeholder{color:#3a3a3a;}
+        ::-webkit-scrollbar{width:4px}::-webkit-scrollbar-thumb{background:#2a2a2a;border-radius:2px}
+      `}</style>
+
+      {/* Header */}
+      <div style={{padding:"20px 20px 14px",borderBottom:"1px solid #ffffff0d",background:"rgba(0,0,0,0.45)",backdropFilter:"blur(12px)",position:"sticky",top:0,zIndex:20}}>
+        <div style={{maxWidth:640,margin:"0 auto",display:"flex",justifyContent:"space-between",alignItems:"flex-start"}}>
+          <div>
+            <h1 style={{margin:0,fontSize:22,letterSpacing:4,color:"#d4af37",fontWeight:400,textShadow:"0 0 24px #d4af3733"}}>⚔ CHORE QUEST</h1>
+            <div style={{fontSize:11,color:"#444",letterSpacing:2,marginTop:2}}>THE DAILY CHRONICLE</div>
+          </div>
+          <div style={{textAlign:"right"}}>
+            <div style={{fontSize:22,fontWeight:800,color:"#d4af37",lineHeight:1}}>{totalClassLevel}</div>
+            <div style={{fontSize:10,color:"#444",letterSpacing:2}}>CLASS LEVELS</div>
+          </div>
+        </div>
+      </div>
+
+      <div style={{maxWidth:640,margin:"0 auto",padding:"0 16px"}}>
+
+        {/* Nav */}
+        <div style={{display:"flex",gap:4,padding:"14px 0 12px"}}>
+          {NAV.map(([t,l])=>(
+            <button key={t} onClick={()=>{setTab(t);setLastResult(null);}} style={{
+              flex:1,padding:"10px 0",border:"none",borderRadius:8,cursor:"pointer",
+              fontFamily:"inherit",fontSize:10,fontWeight:700,letterSpacing:0.5,
+              background:tab===t?"#d4af37":"rgba(255,255,255,0.04)",
+              color:tab===t?"#0c0c14":"#555",transition:"all 0.2s",
+              position:"relative",
+            }}>
+              {l}
+              {t==="character"&&pendingCount>0&&<span style={{position:"absolute",top:4,right:6,width:8,height:8,borderRadius:"50%",background:"#e87ea1",animation:"glow 2s infinite"}}/>}
+            </button>
+          ))}
+        </div>
+
+        {/* ── CHARACTER ── */}
+        {tab==="character"&&(
+          <div>
+            {/* DM narration */}
+            {lastResult&&(
+              <div style={{background:"rgba(212,175,55,0.06)",border:"1px solid #d4af3722",borderRadius:14,padding:"16px 18px",marginBottom:14}}>
+                <div style={{color:"#c8a830",fontStyle:"italic",fontSize:14,lineHeight:1.7,marginBottom:8}}>🎲 {lastResult.narration}</div>
+                {lastResult.dmNote&&<div style={{fontSize:12,color:"#555",fontStyle:"italic",borderTop:"1px solid #ffffff0a",paddingTop:8}}>DM: {lastResult.dmNote}</div>}
+              </div>
+            )}
+            {submitting&&<div style={{textAlign:"center",padding:"16px 0",color:"#d4af37",fontStyle:"italic",fontSize:14,animation:"pulse 1.5s infinite"}}>🎲 The DM deliberates...</div>}
+
+            {/* Active combat banner */}
+            {data.combat?.active && <CombatBanner enemy={data.combat.active}/>}
+
+            {/* Victory result */}
+            {victoryResult&&(
+              <div style={{background:"rgba(232,115,74,0.1)",border:"1px solid #e8734a44",borderRadius:14,padding:"16px 18px",marginBottom:14}}>
+                <div style={{fontSize:13,color:"#e8734a",fontWeight:700,marginBottom:6}}>☠️ {victoryResult.enemy.emoji} {victoryResult.enemy.name} Defeated!</div>
+                <div style={{color:"#c8a060",fontStyle:"italic",fontSize:13,lineHeight:1.7,marginBottom:6}}>{victoryResult.result.narration}</div>
+                {victoryResult.result.dmNote&&<div style={{fontSize:12,color:"#555",fontStyle:"italic"}}>DM: {victoryResult.result.dmNote}</div>}
+                <button onClick={()=>setVictoryResult(null)} style={{marginTop:10,padding:"6px 14px",border:"1px solid #ffffff0a",borderRadius:8,background:"transparent",color:"#444",fontFamily:"inherit",fontSize:12,cursor:"pointer"}}>Dismiss</button>
+              </div>
+            )}
+
+            {/* Pending approvals */}
+            {pendingCount>0&&(
+              <div style={{marginBottom:16}}>
+                <div style={{fontSize:11,color:"#e87ea1",letterSpacing:2,marginBottom:10}}>🔔 AWAITING YOUR APPROVAL</div>
+                <div style={{display:"flex",flexDirection:"column",gap:8}}>
+                  {(data.pending||[]).map(item=>(
+                    <PendingCard key={item.id} item={item} onApprove={()=>approvePending(item)} onReject={()=>rejectPending(item)}/>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* Character sub-tabs */}
+            <div style={{display:"flex",gap:4,marginBottom:14}}>
+              {[["classes","⚔ Classes"],["skills","🎯 Skills"],["attributes","💎 Attributes"]].map(([t,l])=>(
+                <button key={t} onClick={()=>setCharTab(t)} style={{
+                  flex:1,padding:"9px 0",border:"none",borderRadius:8,cursor:"pointer",
+                  fontFamily:"inherit",fontSize:11,fontWeight:700,letterSpacing:0.5,
+                  background:charTab===t?"rgba(212,175,55,0.15)":"rgba(255,255,255,0.03)",
+                  color:charTab===t?"#d4af37":"#555",
+                  borderBottom:charTab===t?"2px solid #d4af37":"2px solid transparent",
+                  transition:"all 0.2s",
+                }}>{l}</button>
+              ))}
+            </div>
+
+            {charTab==="classes"&&(
+              <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10}}>
+                {CLASSES.map(cls=><ClassCard key={cls.id} cls={cls} xp={data.xp[cls.id]||0}/>)}
+              </div>
+            )}
+
+            {charTab==="skills"&&(
+              <div>
+                {discoveredSkills.length===0?(
+                  <div style={{textAlign:"center",padding:"40px 20px",color:"#333",fontStyle:"italic",lineHeight:1.8}}>
+                    No skills discovered yet.<br/>
+                    <span style={{fontSize:12}}>Complete tasks to reveal your hidden abilities.</span>
+                  </div>
+                ):(
+                  <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10}}>
+                    {discoveredSkills.map(s=><SkillCard key={s.id} item={s} xp={s.xp} type="skill"/>)}
+                  </div>
+                )}
+              </div>
+            )}
+
+            {charTab==="attributes"&&(
+              <div>
+                {discoveredAttrs.length===0?(
+                  <div style={{textAlign:"center",padding:"40px 20px",color:"#333",fontStyle:"italic",lineHeight:1.8}}>
+                    No attributes revealed yet.<br/>
+                    <span style={{fontSize:12}}>Your nature emerges through action.</span>
+                  </div>
+                ):(
+                  <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10}}>
+                    {discoveredAttrs.map(a=><SkillCard key={a.id} item={a} xp={a.xp} type="attribute"/>)}
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* TIMER */}
+        {tab==="timer"&&<TimerTab onSessionComplete={handleSubmit} submitting={submitting}/>}
+
+        {/* SAVE */}
+        {tab==="save"&&<div style={{paddingTop:8}}><SaveModal data={data} onImport={handleImport} onClose={()=>setTab("character")} inline={true}/></div>}
+
+        {/* COMBAT */}
+        {tab==="combat"&&<CombatTab combat={data.combat} onSummonEnemy={summonEnemy} onAbandon={abandonEnemy} totalClassLevel={totalClassLevel} recentLog={data.log||[]}/>}
+
+        {/* LOG QUEST */}
+        {tab==="add"&&<ManualLogForm submitting={submitting} onSubmit={handleSubmit}/>}
+
+        {/* CHRONICLE */}
+        {tab==="log"&&(
+          <div style={{display:"flex",flexDirection:"column",gap:10}}>
+            {data.log.length===0&&<div style={{color:"#333",textAlign:"center",padding:50,fontStyle:"italic"}}>No entries yet. Begin your chronicle.</div>}
+            {data.log.map(entry=>{
+              const classEarned = Object.entries(entry.xpGained||{}).filter(([,v])=>v>0);
+              const skillEarned = Object.entries(entry.skillXpGained||{}).filter(([,v])=>v>0);
+              const attrEarned  = Object.entries(entry.attrXpGained||{}).filter(([,v])=>v>0);
+              const discovered  = entry.discovered||[];
+              return (
+                <div key={entry.id} style={{background:"rgba(255,255,255,0.02)",border:"1px solid #ffffff08",borderRadius:14,padding:"14px 16px"}}>
+                  <div style={{display:"flex",justifyContent:"space-between",fontSize:11,color:"#3a3a3a",marginBottom:8,letterSpacing:1}}>
+                    <span>{entry.date}</span><span>{entry.minutes} min</span>
+                  </div>
+                  <div style={{fontSize:15,color:"#c8c0b0",marginBottom:10,fontWeight:600}}>{entry.description}</div>
+                  {entry.narration&&<div style={{fontSize:13,color:"#777",fontStyle:"italic",lineHeight:1.65,marginBottom:10,borderLeft:"2px solid #d4af3722",paddingLeft:12}}>{entry.narration}</div>}
+                  {entry.dmNote&&<div style={{fontSize:12,color:"#484840",fontStyle:"italic",marginBottom:10}}>DM: {entry.dmNote}</div>}
+                  <div style={{display:"flex",flexWrap:"wrap",gap:5}}>
+                    {classEarned.map(([id,v])=>{const c=CLASSES.find(x=>x.id===id);return <span key={id} style={{background:`${c.color}15`,color:c.color,border:`1px solid ${c.color}33`,borderRadius:20,padding:"2px 9px",fontSize:11,fontWeight:700}}>{c.emoji}+{v}</span>;})}
+                    {skillEarned.map(([id,v])=>{const s=[...KNOWN_SKILLS,...(data.customSkills||[])].find(x=>x.id===id);return s?<span key={id} style={{background:`${s.color}15`,color:s.color,border:`1px solid ${s.color}33`,borderRadius:20,padding:"2px 9px",fontSize:11,fontWeight:700}}>{s.emoji}+{v}</span>:null;})}
+                    {attrEarned.map(([id,v])=>{const a=[...KNOWN_ATTRIBUTES,...(data.customAttrs||[])].find(x=>x.id===id);return a?<span key={id} style={{background:`${a.color}15`,color:a.color,border:`1px solid ${a.color}33`,borderRadius:20,padding:"2px 9px",fontSize:11,fontWeight:700}}>{a.emoji}+{v}</span>:null;})}
+                    {discovered.map(id=>{const s=[...KNOWN_SKILLS,...(data.customSkills||[]),...KNOWN_ATTRIBUTES,...(data.customAttrs||[])].find(x=>x.id===id);return s?<span key={id} style={{background:"rgba(212,175,55,0.1)",color:"#d4af37",border:"1px solid #d4af3733",borderRadius:20,padding:"2px 9px",fontSize:11,fontWeight:700}}>✨ {s.name}</span>:null;})}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </div>
+
+      {showSave&&<SaveModal data={data} onImport={handleImport} onClose={()=>setShowSave(false)}/>}
+
+      {toast&&(
+        <div style={{position:"fixed",bottom:24,left:"50%",transform:"translateX(-50%)",background:"#1a1a2a",border:"1px solid #d4af3755",borderRadius:12,padding:"12px 20px",color:"#d4af37",fontFamily:"inherit",fontSize:13,zIndex:100,maxWidth:360,textAlign:"center",boxShadow:"0 4px 28px #00000099",animation:"fadein 0.3s ease",whiteSpace:"pre-line",lineHeight:1.7}}>{toast}</div>
+      )}
+    </div>
+  );
+}
+
+    try {
+      clearTimeout(loadTimeout);
+      const root = ReactDOM.createRoot(document.getElementById('root'));
+      root.render(React.createElement(ChoreQuest));
+      document.getElementById('loader').style.opacity='0';
+      setTimeout(()=>{ document.getElementById('loader').style.display='none'; }, 500);
+    } catch(e) {
+      showError('Render error: ' + e.message);
+    }
+  </script>
+</body>
+</html>
