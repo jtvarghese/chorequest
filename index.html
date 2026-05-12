@@ -14,16 +14,44 @@
     * { box-sizing: border-box; margin: 0; padding: 0; }
     body { background: #0c0c14; font-family: Palatino, Georgia, serif; overscroll-behavior: none; }
     #root { min-height: 100vh; }
+    #loader {
+      position: fixed; inset: 0; background: #0c0c14;
+      display: flex; flex-direction: column; align-items: center; justify-content: center;
+      color: #d4af37; font-family: Palatino, Georgia, serif; gap: 16px;
+    }
+    #loader h1 { font-size: 24px; letter-spacing: 4px; font-weight: 400; }
+    #loader p { font-size: 13px; color: #555; }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    #loader .ring {
+      width: 40px; height: 40px; border: 3px solid #1a1a2a;
+      border-top-color: #d4af37; border-radius: 50%;
+      animation: spin 1s linear infinite;
+    }
   </style>
 </head>
 <body>
+  <div id="loader">
+    <div class="ring"></div>
+    <h1>⚔ CHORE QUEST</h1>
+    <p>Loading your adventure...</p>
+  </div>
   <div id="root"></div>
 
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.5/babel.min.js"></script>
+  <script>
+    // Show error if app fails to load within 15 seconds
+    setTimeout(function() {
+      var loader = document.getElementById('loader');
+      if (loader && loader.style.display !== 'none') {
+        loader.innerHTML = '<h1 style="color:#e8734a">⚠ Load Error</h1><p style="color:#888;padding:20px;text-align:center">The app failed to load. Please check your internet connection and refresh.</p><button onclick="location.reload()" style="background:#d4af37;color:#0c0c14;border:none;padding:12px 24px;border-radius:8px;font-size:16px;cursor:pointer;margin-top:16px">Retry</button>';
+      }
+    }, 15000);
+  </script>
 
-  <script type="text/babel">
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js" crossorigin></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js" crossorigin></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.5/babel.min.js" crossorigin></script>
+
+  <script type="text/babel" data-presets="react">
     const { useState, useEffect, useRef } = React;
 
 
@@ -1565,8 +1593,11 @@ export default function ChoreQuest() {
 }
 
 
-    const root = ReactDOM.createRoot(document.getElementById('root'));
+    const domRoot = document.getElementById('root');
+    const root = ReactDOM.createRoot(domRoot);
     root.render(<ChoreQuest/>);
+    // Hide loader once React has rendered
+    document.getElementById('loader').style.display = 'none';
   </script>
 </body>
 </html>
